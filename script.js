@@ -20,15 +20,16 @@ class GameObject {
  * Encapsulates segment data, directional physics, self-collision stun, and growth.
  */
 class Snake extends GameObject {
-  constructor(x, y, gridLimit) {
+  constructor(x, y, gridLimit, initialDirection = { x: 1, y: 0 }) {
     super(x, y, gridLimit);
+    this.dir = initialDirection;
+    this.nextDir = initialDirection;
+    // Build initial 3 segments trailing behind the movement vector
     this.segments = [
       { x: x, y: y },
-      { x: x - 1, y: y },
-      { x: x - 2, y: y }
+      { x: (x - this.dir.x + gridLimit) % gridLimit, y: (y - this.dir.y + gridLimit) % gridLimit },
+      { x: (x - this.dir.x * 2 + gridLimit) % gridLimit, y: (y - this.dir.y * 2 + gridLimit) % gridLimit }
     ];
-    this.dir = { x: 1, y: 0 };
-    this.nextDir = { x: 1, y: 0 };
     this.stunTicks = 0;
     this.score = 0;
   }
@@ -63,6 +64,11 @@ class Snake extends GameObject {
     this.x = head.x;
     this.y = head.y;
     return true;
+  }
+
+  // Helper method: checks if any segment (head or body) occupies coordinates (x, y)
+  occupies(x, y) {
+    return this.segments.some(seg => seg.x === x && seg.y === y);
   }
 
   grow() {
@@ -122,9 +128,19 @@ class Fruit extends GameObject {
     }
   }
 
-  respawn() {
-    this.x = Math.floor(Math.random() * this.gridLimit);
-    this.y = Math.floor(Math.random() * this.gridLimit);
+  respawn(forbiddenCheck = () => false) {
+    let candidate;
+    let attempts = 0;
+    do {
+      candidate = {
+        x: Math.floor(Math.random() * this.gridLimit),
+        y: Math.floor(Math.random() * this.gridLimit)
+      };
+      attempts++;
+    } while (forbiddenCheck(candidate.x, candidate.y) && attempts < 100);
+
+    this.x = candidate.x;
+    this.y = candidate.y;
     this.invulnerableTicks = 15; // ~1.5s invulnerability shield
   }
 
@@ -240,9 +256,37 @@ class GameManager {
     this.timeLeft = parseInt(this.ui.roundDurationInput.value, 10);
     this.ui.timerDisplay.textContent = this.timeLeft;
 
-    // Instantiate game entities
-    this.snake = new Snake(4, 4, this.gridLimit);
-    this.fruit = new Fruit(this.gridLimit - 5, this.gridLimit - 5, this.gridLimit);
+    // 1. Randomized Spawn for Snake
+    const snakeHead = {
+      x: Math.floor(Math.random() * (this.gridLimit - 6)) + 3,
+      y: Math.floor(Math.random() * (this.gridLimit - 6)) + 3
+    };
+    const directions = [
+      { x: 1, y: 0 },
+      { x: -1, y: 0 },
+      { x: 0, y: 1 },
+      { x: 0, y: -1 }
+    ];
+    const randomSnakeDir = directions[Math.floor(Math.random() * directions.length)];
+    this.snake = new Snake(snakeHead.x, snakeHead.y, this.gridLimit, randomSnakeDir);
+
+    // 2. Randomized Spawn for Fruit (ensures safe distance from Snake)
+    let fruitSpawn;
+    let attempts = 0;
+    do {
+      fruitSpawn = {
+        x: Math.floor(Math.random() * this.gridLimit),
+        y: Math.floor(Math.random() * this.gridLimit)
+      };
+      const distance = Math.hypot(fruitSpawn.x - snakeHead.x, fruitSpawn.y - snakeHead.y);
+      attempts++;
+      if (distance >= 5 && !this.snake.occupies(fruitSpawn.x, fruitSpawn.y)) {
+        break;
+      }
+    } while (attempts < 100);
+
+    this.fruit = new Fruit(fruitSpawn.x, fruitSpawn.y, this.gridLimit);
+
     this.traps = [];
     this.seeds = [];
     this.spawnSeeds(3);
@@ -305,7 +349,7 @@ class GameManager {
         y: Math.floor(Math.random() * this.gridLimit)
       };
 
-      const collidesWithSnake = this.snake.segments.some(s => s.x === candidate.x && s.y === candidate.y);
+      const collidesWithSnake = this.snake.occupies(candidate.x, candidate.y);
       const collidesWithFruit = this.fruit.x === candidate.x && this.fruit.y === candidate.y;
       const collidesWithTraps = this.traps.some(t => t.x === candidate.x && t.y === candidate.y);
 
@@ -329,20 +373,22 @@ class GameManager {
 
     // 3. Move Snake
     const moved = this.snake.update();
-    if (moved) {
-      // Catch Collision: Snake reaches Fruit
-      if (
-        this.snake.x === this.fruit.x &&
-        this.snake.y === this.fruit.y &&
-        this.fruit.invulnerableTicks === 0
-      ) {
-        this.snake.grow();
-        this.fruit.respawn();
-      } else {
-        this.snake.popTail();
-      }
 
-      // Trap Collision: Snake runs into a Fruit's trap
+    // 4. Full Collision Check: Head or any Body Segment hitting the Fruit
+    let caughtFruit = false;
+    if (this.fruit.invulnerableTicks === 0 && this.snake.occupies(this.fruit.x, this.fruit.y)) {
+      this.snake.grow();
+      this.fruit.respawn((rx, ry) => this.snake.occupies(rx, ry));
+      caughtFruit = true;
+    }
+
+    // If snake moved and did NOT grow from eating the fruit, remove tail segment
+    if (moved && !caughtFruit) {
+      this.snake.popTail();
+    }
+
+    // 5. Trap Collision: Snake Head hits a Fruit's trap
+    if (moved) {
       const trapHitIndex = this.traps.findIndex(t => t.x === this.snake.x && t.y === this.snake.y);
       if (trapHitIndex !== -1) {
         this.traps.splice(trapHitIndex, 1);
@@ -351,7 +397,7 @@ class GameManager {
       }
     }
 
-    // 4. Update Traps (filter out expired instances)
+    // 6. Update Traps (filter out expired instances)
     this.traps = this.traps.filter(trap => trap.update());
 
     this.updateHUD();
