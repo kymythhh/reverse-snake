@@ -6,7 +6,7 @@
 
 body {
   background: #1e1e24;
-  color: #fff;
+  color: #ffffff;
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   display: flex;
   justify-content: center;
@@ -15,10 +15,11 @@ body {
 }
 
 .game-wrapper {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   padding: 16px;
 }
 
@@ -137,7 +138,7 @@ canvas {
 
 .banner {
   position: absolute;
-  top: 50%;
+  top: 55%;
   left: 50%;
   transform: translate(-50%, -50%);
   background: rgba(15, 15, 20, 0.95);
@@ -149,4 +150,5 @@ canvas {
   font-weight: bold;
   display: none;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+  z-index: 10;
 }

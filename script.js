@@ -1,300 +1,437 @@
-const canvas = document.getElementById("gameCanvas");
-const ctx = canvas.getContext("2d");
-
-const snakeScoreEl = document.getElementById("snakeScore");
-const fruitScoreEl = document.getElementById("fruitScore");
-const trapChargesEl = document.getElementById("trapCharges");
-const timerDisplayEl = document.getElementById("timerDisplay");
-const roundDurationInput = document.getElementById("roundDuration");
-const startBtn = document.getElementById("startBtn");
-const resetBtn = document.getElementById("resetBtn");
-const banner = document.getElementById("banner");
-
-const GRID_SIZE = 20;
-const TILES = canvas.width / GRID_SIZE;
-
-// Game State
-let snake = [];
-let snakeDir = { x: 0, y: 0 };
-let snakeNextDir = { x: 0, y: 0 };
-let snakeScore = 0;
-let snakeStunTicks = 0;
-
-let fruit = { x: 0, y: 0 };
-let fruitDir = { x: 0, y: 0 };
-let fruitNextDir = { x: 0, y: 0 };
-let fruitScore = 0;
-let fruitTraps = 0;
-let fruitInvulnerableTicks = 0;
-
-let seeds = [];
-let traps = [];
-
-let timeLeft = 60;
-let gameInterval = null;
-let timerInterval = null;
-let passivePointInterval = null;
-let isRunning = false;
-
-function initGame() {
-  clearInterval(gameInterval);
-  clearInterval(timerInterval);
-  clearInterval(passivePointInterval);
-
-  isRunning = false;
-  banner.style.display = "none";
-  timeLeft = parseInt(roundDurationInput.value, 10);
-  timerDisplayEl.textContent = timeLeft;
-
-  // Reset Snake (Player 1) at Top-Left
-  snake = [
-    { x: 4, y: 4 },
-    { x: 3, y: 4 },
-    { x: 2, y: 4 },
-  ];
-  snakeDir = { x: 1, y: 0 };
-  snakeNextDir = { x: 1, y: 0 };
-  snakeScore = 0;
-  snakeStunTicks = 0;
-
-  // Reset Fruit (Player 2) at Bottom-Right
-  fruit = { x: TILES - 5, y: TILES - 5 };
-  fruitDir = { x: 0, y: 0 };
-  fruitNextDir = { x: 0, y: 0 };
-  fruitScore = 0;
-  fruitTraps = 0;
-  fruitInvulnerableTicks = 0;
-
-  traps = [];
-  seeds = [];
-  spawnSeeds(3);
-
-  updateHud();
-  draw();
-}
-
-function startGame() {
-  if (isRunning) return;
-  isRunning = true;
-  banner.style.display = "none";
-
-  // Game step: 100ms per tick
-  gameInterval = setInterval(gameStep, 100);
-
-  // Countdown timer
-  timerInterval = setInterval(() => {
-    timeLeft--;
-    timerDisplayEl.textContent = timeLeft;
-    if (timeLeft <= 0) {
-      endGame();
-    }
-  }, 1000);
-
-  // Passive survival points for the Fruit: +1 point every second
-  passivePointInterval = setInterval(() => {
-    fruitScore += 1;
-    updateHud();
-  }, 1000);
-}
-
-function endGame() {
-  clearInterval(gameInterval);
-  clearInterval(timerInterval);
-  clearInterval(passivePointInterval);
-  isRunning = false;
-
-  let outcome = "";
-  if (fruitScore > snakeScore) {
-    outcome = `🏆 Fruit Wins! (${fruitScore} vs ${snakeScore})`;
-  } else if (snakeScore > fruitScore) {
-    outcome = `🏆 Snake Wins! (${snakeScore} vs ${fruitScore})`;
-  } else {
-    outcome = `🤝 It's a Tie! (${snakeScore} - ${fruitScore})`;
+/**
+ * 1. Base Class: GameObject
+ * Demonstrates Abstraction & Inheritance.
+ */
+class GameObject {
+  constructor(x, y, gridLimit) {
+    this.x = x;
+    this.y = y;
+    this.gridLimit = gridLimit;
   }
 
-  banner.innerHTML = `${outcome}<br><br><small style="font-size: 0.9rem; color: #bbb;">Click Reset or change settings to play again</small>`;
-  banner.style.display = "block";
-}
-
-function spawnSeeds(targetCount) {
-  while (seeds.length < targetCount) {
-    const candidate = {
-      x: Math.floor(Math.random() * TILES),
-      y: Math.floor(Math.random() * TILES),
-    };
-    const collidesWithSnake = snake.some(s => s.x === candidate.x && s.y === candidate.y);
-    const collidesWithFruit = fruit.x === candidate.x && fruit.y === candidate.y;
-    const collidesWithTraps = traps.some(t => t.x === candidate.x && t.y === candidate.y);
-
-    if (!collidesWithSnake && !collidesWithFruit && !collidesWithTraps) {
-      seeds.push(candidate);
-    }
+  // Polymorphic interface to be overridden by child entities
+  render(ctx, tileSize) {
+    throw new Error("render() must be implemented by child classes");
   }
 }
 
-function placeTrap() {
-  if (fruitTraps <= 0) return;
-  fruitTraps--;
-  traps.push({ x: fruit.x, y: fruit.y, duration: 150 }); // persists ~15 seconds
-  updateHud();
-}
+/**
+ * 2. Child Class: Snake (Player 1)
+ * Encapsulates segment data, directional physics, self-collision stun, and growth.
+ */
+class Snake extends GameObject {
+  constructor(x, y, gridLimit) {
+    super(x, y, gridLimit);
+    this.segments = [
+      { x: x, y: y },
+      { x: x - 1, y: y },
+      { x: x - 2, y: y }
+    ];
+    this.dir = { x: 1, y: 0 };
+    this.nextDir = { x: 1, y: 0 };
+    this.stunTicks = 0;
+    this.score = 0;
+  }
 
-function gameStep() {
-  // 1. Process Snake Movement (if not stunned)
-  if (snakeStunTicks > 0) {
-    snakeStunTicks--;
-  } else {
-    snakeDir = { ...snakeNextDir };
+  setDirection(direction) {
+    // Prevent immediate 180-degree reversal into own neck
+    if (this.dir.x + direction.x !== 0 || this.dir.y + direction.y !== 0) {
+      this.nextDir = direction;
+    }
+  }
+
+  update() {
+    if (this.stunTicks > 0) {
+      this.stunTicks--;
+      return false; // Stunned; skip step
+    }
+
+    this.dir = { ...this.nextDir };
     const head = {
-      x: (snake[0].x + snakeDir.x + TILES) % TILES,
-      y: (snake[0].y + snakeDir.y + TILES) % TILES,
+      x: (this.segments[0].x + this.dir.x + this.gridLimit) % this.gridLimit,
+      y: (this.segments[0].y + this.dir.y + this.gridLimit) % this.gridLimit
     };
 
-    // Snake self-collision -> Stun penalty
-    const selfHit = snake.slice(1).some(seg => seg.x === head.x && seg.y === head.y);
-    if (selfHit) {
-      snakeStunTicks = 12; // ~1.2s freeze
-    } else {
-      snake.unshift(head);
+    // Self-collision detection: triggers temporary freeze penalty
+    const hitSelf = this.segments.slice(1).some(seg => seg.x === head.x && seg.y === head.y);
+    if (hitSelf) {
+      this.stunTicks = 12; // ~1.2s stun
+      return false;
+    }
 
-      // Check if Snake hits Fruit
-      if (head.x === fruit.x && head.y === fruit.y && fruitInvulnerableTicks === 0) {
-        snakeScore += 50;
-        // Grow snake: keep tail, relocate fruit
-        fruit = {
-          x: Math.floor(Math.random() * TILES),
-          y: Math.floor(Math.random() * TILES),
-        };
-        fruitInvulnerableTicks = 15; // 1.5s invulnerability
+    this.segments.unshift(head);
+    this.x = head.x;
+    this.y = head.y;
+    return true;
+  }
+
+  grow() {
+    this.score += 50;
+    // Tail segment is left intact, causing the snake to grow
+  }
+
+  shrinkAndStun() {
+    this.score = Math.max(0, this.score - 10);
+    this.stunTicks = 15; // ~1.5s stun
+    if (this.segments.length > 3) {
+      this.segments.splice(Math.max(3, this.segments.length - 3));
+    }
+  }
+
+  popTail() {
+    this.segments.pop();
+  }
+
+  render(ctx, tileSize) {
+    this.segments.forEach((seg, i) => {
+      if (i === 0) {
+        ctx.fillStyle = this.stunTicks > 0 ? "#90e0ef" : "#00b4d8"; // Paler cyan when stunned
       } else {
-        snake.pop(); // regular movement trims tail
+        ctx.fillStyle = "#0077b6";
       }
-
-      // Check if Snake hits a Trap
-      const trapHitIndex = traps.findIndex(t => t.x === head.x && t.y === head.y);
-      if (trapHitIndex !== -1) {
-        traps.splice(trapHitIndex, 1);
-        fruitScore += 20;
-        snakeScore = Math.max(0, snakeScore - 10);
-        snakeStunTicks = 15; // Stun snake
-        // Cut snake down to a minimum of 3 segments
-        if (snake.length > 3) {
-          snake.splice(Math.max(3, snake.length - 3));
-        }
-      }
-    }
+      ctx.fillRect(seg.x * tileSize + 1, seg.y * tileSize + 1, tileSize - 2, tileSize - 2);
+    });
   }
-
-  // 2. Process Fruit Movement
-  fruitDir = { ...fruitNextDir };
-  fruit.x = (fruit.x + fruitDir.x + TILES) % TILES;
-  fruit.y = (fruit.y + fruitDir.y + TILES) % TILES;
-
-  if (fruitInvulnerableTicks > 0) fruitInvulnerableTicks--;
-
-  // Fruit collects Seeds
-  const seedIndex = seeds.findIndex(s => s.x === fruit.x && s.y === fruit.y);
-  if (seedIndex !== -1) {
-    seeds.splice(seedIndex, 1);
-    fruitScore += 10;
-    fruitTraps++;
-    spawnSeeds(3);
-  }
-
-  // 3. Update trap durations
-  for (let i = traps.length - 1; i >= 0; i--) {
-    traps[i].duration--;
-    if (traps[i].duration <= 0) {
-      traps.splice(i, 1);
-    }
-  }
-
-  updateHud();
-  draw();
 }
 
-function updateHud() {
-  snakeScoreEl.textContent = snakeScore;
-  fruitScoreEl.textContent = fruitScore;
-  trapChargesEl.textContent = fruitTraps;
-}
-
-function draw() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  // Background Grid Guide
-  ctx.strokeStyle = "#1b1b22";
-  for (let i = 0; i < canvas.width; i += GRID_SIZE) {
-    ctx.beginPath();
-    ctx.moveTo(i, 0);
-    ctx.lineTo(i, canvas.height);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(0, i);
-    ctx.lineTo(canvas.width, i);
-    ctx.stroke();
+/**
+ * 3. Child Class: Fruit (Player 2)
+ * Encapsulates movement, respawn coordinates, invulnerability, and trap resource storage.
+ */
+class Fruit extends GameObject {
+  constructor(x, y, gridLimit) {
+    super(x, y, gridLimit);
+    this.dir = { x: 0, y: 0 };
+    this.nextDir = { x: 0, y: 0 };
+    this.score = 0;
+    this.trapsAvailable = 0;
+    this.invulnerableTicks = 0;
   }
 
-  // Draw Seeds (Yellow Pellets)
-  seeds.forEach(seed => {
-    ctx.fillStyle = "#ffb703";
-    ctx.beginPath();
-    ctx.arc(seed.x * GRID_SIZE + GRID_SIZE / 2, seed.y * GRID_SIZE + GRID_SIZE / 2, GRID_SIZE / 4, 0, Math.PI * 2);
-    ctx.fill();
-  });
+  setDirection(direction) {
+    this.nextDir = direction;
+  }
 
-  // Draw Traps (Spikes/Webs)
-  traps.forEach(trap => {
-    ctx.fillStyle = "#8338ec";
-    ctx.fillRect(trap.x * GRID_SIZE + 4, trap.y * GRID_SIZE + 4, GRID_SIZE - 8, GRID_SIZE - 8);
-  });
+  update() {
+    this.dir = { ...this.nextDir };
+    this.x = (this.x + this.dir.x + this.gridLimit) % this.gridLimit;
+    this.y = (this.y + this.dir.y + this.gridLimit) % this.gridLimit;
 
-  // Draw Snake (Cyan to Deep Blue body)
-  snake.forEach((seg, i) => {
-    if (i === 0) {
-      ctx.fillStyle = snakeStunTicks > 0 ? "#90e0ef" : "#00b4d8"; // Pale if stunned
-    } else {
-      ctx.fillStyle = "#0077b6";
+    if (this.invulnerableTicks > 0) {
+      this.invulnerableTicks--;
     }
-    ctx.fillRect(seg.x * GRID_SIZE + 1, seg.y * GRID_SIZE + 1, GRID_SIZE - 2, GRID_SIZE - 2);
-  });
+  }
 
-  // Draw Fruit (Red, pulses when invulnerable)
-  if (fruitInvulnerableTicks % 4 < 2) {
+  respawn() {
+    this.x = Math.floor(Math.random() * this.gridLimit);
+    this.y = Math.floor(Math.random() * this.gridLimit);
+    this.invulnerableTicks = 15; // ~1.5s invulnerability shield
+  }
+
+  collectSeed() {
+    this.score += 10;
+    this.trapsAvailable++;
+  }
+
+  createTrap() {
+    if (this.trapsAvailable <= 0) return null;
+    this.trapsAvailable--;
+    return new Trap(this.x, this.y, this.gridLimit, 150); // Active for 150 ticks (~15 seconds)
+  }
+
+  render(ctx, tileSize) {
+    // Blinking effect during invulnerability
+    if (this.invulnerableTicks % 4 >= 2) return;
+
+    // Body
     ctx.fillStyle = "#e63946";
     ctx.beginPath();
-    ctx.arc(fruit.x * GRID_SIZE + GRID_SIZE / 2, fruit.y * GRID_SIZE + GRID_SIZE / 2, GRID_SIZE / 2 - 2, 0, Math.PI * 2);
+    ctx.arc(
+      this.x * tileSize + tileSize / 2,
+      this.y * tileSize + tileSize / 2,
+      tileSize / 2 - 2,
+      0,
+      Math.PI * 2
+    );
     ctx.fill();
 
     // Stem
     ctx.fillStyle = "#2a9d8f";
-    ctx.fillRect(fruit.x * GRID_SIZE + GRID_SIZE / 2 - 2, fruit.y * GRID_SIZE + 1, 4, 4);
+    ctx.fillRect(this.x * tileSize + tileSize / 2 - 2, this.y * tileSize + 1, 4, 4);
   }
 }
 
-// Input Listener
-window.addEventListener("keydown", (e) => {
-  const key = e.key.toLowerCase();
-
-  // Player 1: Snake (W, A, S, D)
-  if (key === "w" && snakeDir.y === 0) snakeNextDir = { x: 0, y: -1 };
-  if (key === "s" && snakeDir.y === 0) snakeNextDir = { x: 0, y: 1 };
-  if (key === "a" && snakeDir.x === 0) snakeNextDir = { x: -1, y: 0 };
-  if (key === "d" && snakeDir.x === 0) snakeNextDir = { x: 1, y: 0 };
-
-  // Player 2: Fruit (Arrows)
-  if (e.key === "ArrowUp") fruitNextDir = { x: 0, y: -1 };
-  if (e.key === "ArrowDown") fruitNextDir = { x: 0, y: 1 };
-  if (e.key === "ArrowLeft") fruitNextDir = { x: -1, y: 0 };
-  if (e.key === "ArrowRight") fruitNextDir = { x: 1, y: 0 };
-
-  // Player 2 Action: Place Trap
-  if (e.key === "Shift" || e.key === "Enter") {
-    placeTrap();
+/**
+ * 4. Child Class: Seed
+ * Neutral collectible items that reward the Fruit player.
+ */
+class Seed extends GameObject {
+  constructor(x, y, gridLimit) {
+    super(x, y, gridLimit);
   }
+
+  render(ctx, tileSize) {
+    ctx.fillStyle = "#ffb703";
+    ctx.beginPath();
+    ctx.arc(
+      this.x * tileSize + tileSize / 2,
+      this.y * tileSize + tileSize / 2,
+      tileSize / 4,
+      0,
+      Math.PI * 2
+    );
+    ctx.fill();
+  }
+}
+
+/**
+ * 5. Child Class: Trap
+ * Defensive hazards dropped by the Fruit player.
+ */
+class Trap extends GameObject {
+  constructor(x, y, gridLimit, duration = 150) {
+    super(x, y, gridLimit);
+    this.duration = duration;
+  }
+
+  update() {
+    this.duration--;
+    return this.duration > 0;
+  }
+
+  render(ctx, tileSize) {
+    ctx.fillStyle = "#8338ec";
+    ctx.fillRect(this.x * tileSize + 4, this.y * tileSize + 4, tileSize - 8, tileSize - 8);
+  }
+}
+
+/**
+ * 6. Orchestrator Class: GameManager
+ * Encapsulates setup, game loop execution, event listening, and collision dispatching.
+ */
+class GameManager {
+  constructor(canvas, uiElements) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext("2d");
+    this.ui = uiElements;
+
+    this.tileSize = 20;
+    this.gridLimit = this.canvas.width / this.tileSize;
+
+    this.snake = null;
+    this.fruit = null;
+    this.seeds = [];
+    this.traps = [];
+
+    this.timeLeft = 60;
+    this.isRunning = false;
+    this.gameInterval = null;
+    this.timerInterval = null;
+    this.passivePointInterval = null;
+
+    this.init();
+    this.bindEvents();
+  }
+
+  init() {
+    this.stopLoops();
+    this.isRunning = false;
+    this.ui.banner.style.display = "none";
+    this.timeLeft = parseInt(this.ui.roundDurationInput.value, 10);
+    this.ui.timerDisplay.textContent = this.timeLeft;
+
+    // Instantiate game entities
+    this.snake = new Snake(4, 4, this.gridLimit);
+    this.fruit = new Fruit(this.gridLimit - 5, this.gridLimit - 5, this.gridLimit);
+    this.traps = [];
+    this.seeds = [];
+    this.spawnSeeds(3);
+
+    this.updateHUD();
+    this.render();
+  }
+
+  start() {
+    if (this.isRunning) return;
+    this.isRunning = true;
+    this.ui.banner.style.display = "none";
+
+    // Main Engine Tick: 100ms
+    this.gameInterval = setInterval(() => this.gameStep(), 100);
+
+    // Countdown Timer
+    this.timerInterval = setInterval(() => {
+      this.timeLeft--;
+      this.ui.timerDisplay.textContent = this.timeLeft;
+      if (this.timeLeft <= 0) {
+        this.endGame();
+      }
+    }, 1000);
+
+    // Passive Fruit Survival Bonus (+1 pt/sec)
+    this.passivePointInterval = setInterval(() => {
+      this.fruit.score += 1;
+      this.updateHUD();
+    }, 1000);
+  }
+
+  stopLoops() {
+    clearInterval(this.gameInterval);
+    clearInterval(this.timerInterval);
+    clearInterval(this.passivePointInterval);
+  }
+
+  endGame() {
+    this.stopLoops();
+    this.isRunning = false;
+
+    let resultMsg = "";
+    if (this.fruit.score > this.snake.score) {
+      resultMsg = `🏆 Fruit Wins! (${this.fruit.score} vs ${this.snake.score})`;
+    } else if (this.snake.score > this.fruit.score) {
+      resultMsg = `🏆 Snake Wins! (${this.snake.score} vs ${this.fruit.score})`;
+    } else {
+      resultMsg = `🤝 It's a Tie! (${this.snake.score} - ${this.fruit.score})`;
+    }
+
+    this.ui.banner.innerHTML = `${resultMsg}<br><br><small style="font-size: 0.9rem; color: #bbb;">Click Reset to start a new match</small>`;
+    this.ui.banner.style.display = "block";
+  }
+
+  spawnSeeds(targetCount) {
+    while (this.seeds.length < targetCount) {
+      const candidate = {
+        x: Math.floor(Math.random() * this.gridLimit),
+        y: Math.floor(Math.random() * this.gridLimit)
+      };
+
+      const collidesWithSnake = this.snake.segments.some(s => s.x === candidate.x && s.y === candidate.y);
+      const collidesWithFruit = this.fruit.x === candidate.x && this.fruit.y === candidate.y;
+      const collidesWithTraps = this.traps.some(t => t.x === candidate.x && t.y === candidate.y);
+
+      if (!collidesWithSnake && !collidesWithFruit && !collidesWithTraps) {
+        this.seeds.push(new Seed(candidate.x, candidate.y, this.gridLimit));
+      }
+    }
+  }
+
+  gameStep() {
+    // 1. Move Fruit
+    this.fruit.update();
+
+    // 2. Fruit/Seed Collision
+    const seedIndex = this.seeds.findIndex(s => s.x === this.fruit.x && s.y === this.fruit.y);
+    if (seedIndex !== -1) {
+      this.seeds.splice(seedIndex, 1);
+      this.fruit.collectSeed();
+      this.spawnSeeds(3);
+    }
+
+    // 3. Move Snake
+    const moved = this.snake.update();
+    if (moved) {
+      // Catch Collision: Snake reaches Fruit
+      if (
+        this.snake.x === this.fruit.x &&
+        this.snake.y === this.fruit.y &&
+        this.fruit.invulnerableTicks === 0
+      ) {
+        this.snake.grow();
+        this.fruit.respawn();
+      } else {
+        this.snake.popTail();
+      }
+
+      // Trap Collision: Snake runs into a Fruit's trap
+      const trapHitIndex = this.traps.findIndex(t => t.x === this.snake.x && t.y === this.snake.y);
+      if (trapHitIndex !== -1) {
+        this.traps.splice(trapHitIndex, 1);
+        this.fruit.score += 20;
+        this.snake.shrinkAndStun();
+      }
+    }
+
+    // 4. Update Traps (filter out expired instances)
+    this.traps = this.traps.filter(trap => trap.update());
+
+    this.updateHUD();
+    this.render();
+  }
+
+  render() {
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+    // Canvas Background Grid
+    this.ctx.strokeStyle = "#1b1b22";
+    for (let i = 0; i < this.canvas.width; i += this.tileSize) {
+      this.ctx.beginPath();
+      this.ctx.moveTo(i, 0);
+      this.ctx.lineTo(i, this.canvas.height);
+      this.ctx.stroke();
+      this.ctx.beginPath();
+      this.ctx.moveTo(0, i);
+      this.ctx.lineTo(this.canvas.width, i);
+      this.ctx.stroke();
+    }
+
+    // Polymorphic batch render: invokes each object's render() implementation
+    this.seeds.forEach(seed => seed.render(this.ctx, this.tileSize));
+    this.traps.forEach(trap => trap.render(this.ctx, this.tileSize));
+    this.snake.render(this.ctx, this.tileSize);
+    this.fruit.render(this.ctx, this.tileSize);
+  }
+
+  updateHUD() {
+    this.ui.snakeScore.textContent = this.snake.score;
+    this.ui.fruitScore.textContent = this.fruit.score;
+    this.ui.trapCharges.textContent = this.fruit.trapsAvailable;
+  }
+
+  handleKeyDown(e) {
+    const key = e.key.toLowerCase();
+
+    // Player 1 (Snake): W, A, S, D
+    if (key === "w") this.snake.setDirection({ x: 0, y: -1 });
+    if (key === "s") this.snake.setDirection({ x: 0, y: 1 });
+    if (key === "a") this.snake.setDirection({ x: -1, y: 0 });
+    if (key === "d") this.snake.setDirection({ x: 1, y: 0 });
+
+    // Player 2 (Fruit): Arrow Keys
+    if (e.key === "ArrowUp") this.fruit.setDirection({ x: 0, y: -1 });
+    if (e.key === "ArrowDown") this.fruit.setDirection({ x: 0, y: 1 });
+    if (e.key === "ArrowLeft") this.fruit.setDirection({ x: -1, y: 0 });
+    if (e.key === "ArrowRight") this.fruit.setDirection({ x: 1, y: 0 });
+
+    // Player 2 Action: Drop Trap
+    if (e.key === "Shift" || e.key === "Enter") {
+      const newTrap = this.fruit.createTrap();
+      if (newTrap) {
+        this.traps.push(newTrap);
+        this.updateHUD();
+      }
+    }
+  }
+
+  bindEvents() {
+    window.addEventListener("keydown", (e) => this.handleKeyDown(e));
+    this.ui.startBtn.addEventListener("click", () => this.start());
+    this.ui.resetBtn.addEventListener("click", () => this.init());
+  }
+}
+
+// Initialization Entry Point
+window.addEventListener("DOMContentLoaded", () => {
+  const canvas = document.getElementById("gameCanvas");
+  const uiElements = {
+    snakeScore: document.getElementById("snakeScore"),
+    fruitScore: document.getElementById("fruitScore"),
+    trapCharges: document.getElementById("trapCharges"),
+    timerDisplay: document.getElementById("timerDisplay"),
+    roundDurationInput: document.getElementById("roundDuration"),
+    startBtn: document.getElementById("startBtn"),
+    resetBtn: document.getElementById("resetBtn"),
+    banner: document.getElementById("banner")
+  };
+
+  new GameManager(canvas, uiElements);
 });
-
-startBtn.addEventListener("click", startGame);
-resetBtn.addEventListener("click", initGame);
-
-initGame();
